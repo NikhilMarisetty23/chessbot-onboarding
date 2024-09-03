@@ -1,20 +1,20 @@
-import { Message, SendMessage } from "../../common/message/message.ts";
 import { GameEngine } from "../../common/game-engine.ts";
 import {
+    Message,
+    SndMessage,
     GameInterruptedMessage,
-    GameStartedMessage,
-    PlacementMessage,
-} from "../../common/message/game-message.ts";
+    GameFinishedMessage,
+} from "../../common/message/messages.ts";
 import { SocketManager } from "./socket-manager.ts";
 import { ClientManager } from "./client-manager.ts";
-import { ClientType } from "../../common/client-types.ts"
+import { ClintType } from "../../common/client-types.ts"
 import {
     GameEndReason,
     GameEndReason as GameInterruptedReason,
 } from "../../common/game-end-reasons.ts"
 import { PieceType } from "../../common/game-types.ts";
 
-export abstract class GameManager {
+export class GameManager {
     protected gameInterruptedReason: GameInterruptedReason | undefined =
         undefined;
 
@@ -24,8 +24,12 @@ export abstract class GameManager {
         /**
          * The pieceType the host is playing.
          */
-        public hostPiece: PieceType
-    ) {}
+        public hostPiece: PieceType,
+        protected clientManager: ClientManager,
+    ) {
+        // Notify other client the game has started
+        clientManager.sendToClient(new GameStartedMessage());
+    }
 
     public isGameEnded(): boolean {
         return (
@@ -38,22 +42,14 @@ export abstract class GameManager {
         return this.gameInterruptedReason ?? this.game.getGameFinishedReason();
     }
 
-    public oppositePiece(pieceType: PieceType): PieceType {
-        if (pieceType == PieceType.X) {
-            return PieceType.O;
-        } else {
-            return PieceType.X;
-        }
-    }
-
     /**
      * A method which is invoked whenever a game first connects.
-     * Should respond with the game's pieceType, board, and whether the game is finished.
+     * Should respond with the what piece the host is playing, the game object, and whether the game is finished.
      */
     public getGameState(): object {
-        const pieceType: PieceType = this.hostPiece;
+        const hostPiece: PieceType = this.hostPiece;
         return {
-            pieceType,
+            hostPiece,
             game: this.game,
             gameEndReason: this.getGameEndReason(),
         };
@@ -63,24 +59,6 @@ export abstract class GameManager {
         return {
             game: this.game
         };
-    }
-
-    public abstract handleMessage(
-        message: Message,
-        clientType: ClientType,
-    ): void;
-}
-
-export class HumanGameManager extends GameManager {
-    constructor(
-        game: GameEngine,
-        socketManager: SocketManager,
-        hostPiece: PieceType,
-        protected clientManager: ClientManager,
-    ) {
-        super(game, socketManager, hostPiece);
-        // Notify other client the game has started
-        clientManager.sendToClient(new GameStartedMessage());
     }
 
     public handleMessage(message: Message, id: string): void {
@@ -104,8 +82,18 @@ export class HumanGameManager extends GameManager {
         }
 
         if (message instanceof PlacementMessage) {
+            if (this.game.getGameFinishedReason()) {
+              console.log("Not sending placement message because game is finished.", message.toJson())
+              return;
+            }
             if (this.game.place(message.placement)) {
                 sendToOpponent(message);
+                const gameFinishedReason = this.game.getGameFinishedReason();
+                if (gameFinishedReason) {
+                    const gameFinishedMessage = new GameFinishedMessage(gameFinishedReason);
+                    sendToPlayer(gameFinishedMessage);
+                    sendToOpponent(gameFinishedMessage);
+                }
             }
         } else if (message instanceof GameInterruptedMessage) {
             this.gameInterruptedReason = message.reason;

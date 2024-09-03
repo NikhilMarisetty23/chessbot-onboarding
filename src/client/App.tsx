@@ -1,23 +1,21 @@
-import "./App.css";
-
 import { useEffect, useState } from "react";
 
-import { PieceType, Placement } from "../common/game-types";
+import { PieceTypes, Placement } from "../common/game-types";
+import { MessageType } from "../common/message/message-types";
 import {
-  MessageType,
+  PlacementMessage,
   RegisterWebsocketMessage,
-} from "../common/message/message";
-import { GameEngine } from "../common/game-engine";
-import { PlacementMessage } from "../common/message/game-message";
-import { ClientType } from "../common/client-types";
+} from "../common/message/messages";
 import { GameFinishedReason } from "../common/game-end-reasons";
 
 function useWebSocket() {
   const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
 
+  // Use effect is a special react function. As far as I know, It basically gets run anytime the component
+  // it's attached to get re-rendered. In this case, whatever component calls the useWebSocket function
   useEffect(() => {
-    const useSecure = window.location.protocol === "https:";
-    const wsProtocol = useSecure ? "wss" : "ws";
+    const useSecureWebSocket = window.location.protocol === "https:";
+    const wsProtocol = useSecureWebSocket ? "wss" : "ws";
     const ws = new WebSocket(
       wsProtocol + "://" + window.location.host + "/game-ws"
     );
@@ -41,31 +39,48 @@ type ClientInfo = {
 };
 
 type InitialGameState = {
-  pieceType: PieceType;
+  hostPiece: PieceType;
   game: {
-    game: PieceType[];
+    board: PieceType[];
+    currentTurn: PieceType;
   };
   gameEndReason: GameFinishedReason | undefined;
 };
+
+const gameFinishReasonToUserFriendlyDescriptionMap = {
+  [GameFinishedReason.O_WON]: "O won the game!",
+  [GameFinishedReason.X_WON]: "X won the game!",
+  [GameFinishedReason.TIE]: "The game was a draw!",
+}
 
 function App() {
   const [clientInfo, setClientInfo] = useState<ClientInfo | null>(null);
   const [initialGameState, setInitialGameState] =
     useState<InitialGameState | null>(null);
+  const [gameEndReason, setGameEndReason] = useState<GameFinishedReason | null>(
+    null
+  );
+  const { webSocket } = useWebSocket();
 
   const getInitialGameState = async () => {
-    const query = new URLSearchParams();
     const res = await fetch("/api/game-state");
 
     const json = (await res.json()) as InitialGameState;
+    setInitialGameState(null);
+    if (json.gameEndReason) {
+      setGameEndReason(json.gameEndReason)
+    } else {
+      setGameEndReason(null)
+    };
     setInitialGameState(json);
   };
 
-  const startGame = async (pieceType: PieceType) => {
+  // When this is run, a an api request is sent to the backend to start a game
+  const startGame = async (hostPiece: PieceType) => {
     const query = new URLSearchParams();
-    query.set("pieceType", pieceType);
+    query.set("hostPiece", hostPiece);
     const startGameRes = await fetch(
-      "/api/start-human-game?" + query.toString(),
+      "/api/start-game?" + query.toString(),
       {
         method: "POST",
         headers: {
@@ -107,63 +122,11 @@ function App() {
     run();
   }, [clientInfo]);
 
-  return (
-    <div className="App">
-      <h1>Tic Tac Toe</h1>
-      {clientInfo === null ? (
-        <p>Loading...</p>
-      ) : initialGameState !== null ? (
-        <TicTacToe
-          initialPlayer={initialGameState.pieceType}
-          initialBoardState={initialGameState.game.game}
-          localPlayer={
-            clientInfo.clientType === ClientType.HOST
-              ? PieceType.X
-              : PieceType.O
-          }
-          spectating={clientInfo.clientType === ClientType.SPECTATOR}
-        />
-      ) : clientInfo.clientType !== ClientType.HOST ? (
-        <p>
-          There is no active game, but you are a {clientInfo.clientType} and
-          cannot start a game. Please wait for the host to start a game.
-        </p>
-      ) : (
-        <button
-          type="button"
-          onClick={async () => {
-            if (!clientInfo) {
-              alert("No client info");
-              return;
-            }
-            const pieceType = PieceType.X;
-            await startGame(pieceType);
-          }}
-        >
-          Start Game
-        </button>
-      )}
-    </div>
-  );
-}
-
-function TicTacToe(props: {
-  initialBoardState: PieceType[];
-  initialPlayer: PieceType;
-  localPlayer: PieceType;
-  spectating: boolean;
-}) {
-  const { initialBoardState, initialPlayer, localPlayer, spectating } = props;
-  const [boardState, setBoardState] = useState<PieceType[]>(initialBoardState);
-  const [player, setPlayer] = useState<PieceType>(initialPlayer);
-  const { webSocket } = useWebSocket();
-
   useEffect(() => {
     if (!webSocket) {
       return;
     }
-
-    webSocket.onmessage = (event) => {
+    const listener = (event: MessageEvent) => {
       const parsedMessage = JSON.parse(event.data) as Record<string, any> & {
         type?: MessageType;
       };
@@ -173,19 +136,131 @@ function TicTacToe(props: {
         return;
       }
 
-      switch (parsedMessage.type) {
-        case MessageType.PLACEMENT:
-          const placementMsg = parsedMessage.placement as Placement;
-          const updatedBoardState = structuredClone(boardState);
-          updatedBoardState[placementMsg.square] = placementMsg.pieceType;
-          setBoardState(updatedBoardState);
-          setPlayer(GameEngine.oppositePiece(placementMsg.pieceType));
-          break;
-        default:
-          console.error("Received unknown message type", parsedMessage);
-          break;
+      if (parsedMessage.type == MessageType.GAME_STARTED) {
+        const run = async () => {
+          await getInitialGameState();
+          window.location.reload();
+        };
+    
+        run();
+      } else if (parsedMessage.type == MessageType.GAME_FINISHED) {
+        setGameEndReason(parsedMessage.reason);
       }
-    };
+    }
+    
+    webSocket.addEventListener('message', listener)
+    return () => {
+      webSocket.removeEventListener('message', listener)
+    }
+  }, [webSocket]);
+  
+  const startGameButtonCallback = async () => {
+      if (!clientInfo) {
+        alert("No client info");
+        return;
+      }
+      const hostPiece = PieceType.X;
+      await startGame(hostPiece);
+      window.location.reload();
+    }
+
+  return (
+    <div className="App">
+      <h1>Tic Tac Toe</h1>
+      {gameEndReason && 
+      <>
+        <p>
+          {gameFinishReasonToUserFriendlyDescriptionMap[gameEndReason]}
+        </p>
+          {clientInfo?.clientType === ClientType.HOST 
+          && <button type="button" onClick={startGameButtonCallback}>Start new game</button>}
+      </>  
+      }
+      {clientInfo === null ? (
+        <p>Loading...</p>
+      ) : initialGameState !== null ? (
+        <TicTacToe
+          currentPlayer={initialGameState.game.currentTurn}
+          initialBoardState={initialGameState.game.board}
+          localPlayer={
+            clientInfo.clientType === ClientType.HOST
+              ? PieceType.X
+              : PieceType.O
+          }
+          spectating={clientInfo.clientType === ClientType.SPECTATOR}
+          webSocket={webSocket}
+          gameEnded={gameEndReason !== null}
+        />
+      ) : clientInfo.clientType !== ClientType.HOST ? (
+        <p>
+          There is no active game, but you are a {clientInfo.clientType} and
+          cannot start a game. Please wait for the host to start a game.
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={startGameButtonCallback}
+        >
+          Start Gmae
+        </button>
+      )}
+    </div>
+  );
+}
+
+type TicTacToeProps = {
+  // Represents the initial board positions when the component is mounted. Used to initialize local state hooks which are updated in real-time as the game progresses via the WebSocket.
+  initialBoardState: PieceType[];
+  
+  // Represents the player that is playing when the component is mounted. Used to initialize local state hooks which are updated in real-time as the game progresses via the WebSocket.
+  currentPlayer: PieceType;
+  
+  // Represents the piece that the local player is playing as.
+  localPlayer: PieceType;
+  
+  // Specifies whether the current client is spectating the game. If the client is spectating, they cannot make moves so buttons are disabled.
+  spectating: boolean;
+  
+  // A reference to the WebSocket connection used for sending and receiving game updates in real-time.
+  webSocket: WebSocket | null;
+  
+  // Tracks whether the game has ended so that the game board can be disabled. True if the game has ended, false otherwise. 
+  gameEnded: boolean
+};
+
+function TicTacToe(props: TicTacToeProps) {
+  const { initialBoardState, currentPlayer, localPlayer, spectating, webSocket, gameEnded } = props;
+  const [boardState, setBoardState] = useState<PieceType[]>(initialBoardState);
+  const [player, setPlayer] = useState<PieceType>(currentPlayer);
+
+  useEffect(() => {
+    if (!webSocket) {
+      return;
+    }
+    
+    const listener = (event: MessageEvent) => {
+      const parsedMessage = JSON.parse(event.data) as Record<string, any> & {
+        type?: MessageType;
+      };
+
+      if (!parsedMessage.type) {
+        console.error("Received message without type", parsedMessage);
+        return;
+      }
+
+      if (parsedMessage.type == MessageType.PLACEMENT) {
+        const placementMsg = parsedMessage.placement as Placement;
+        const updatedBoardState = boardState;
+        updatedBoardState[placementMsg.square] = placementMsg.pieceType;
+        setBoardState(updatedBoardState);
+        setPlayer(GameEngine.oppositePiece(placementMsg.pieceType));
+      } 
+    }
+    
+    webSocket.addEventListener('message', listener)
+    return () => {
+      webSocket.removeEventListener('message', listener)
+    }
   }, [webSocket]);
 
   return (
@@ -195,8 +270,8 @@ function TicTacToe(props: {
       <div className="board-grid">
         {boardState.map((piece, pieceIndex) => {
           return (
-            <BoardPieceComponent
-              key={`piece-${pieceIndex}`}
+            <BoardTile
+              key={`tile-${pieceIndex}`}
               piece={piece}
               disabled={
                 spectating ||
@@ -205,11 +280,11 @@ function TicTacToe(props: {
               }
               onClick={() => {
                 const placement: Placement = {
-                  pieceType: localPlayer,
+                  pieceType: PieceType.X,
                   square: pieceIndex,
                 };
 
-                const newBoardState = structuredClone(boardState);
+                const newBoardState = boardState;
                 newBoardState[pieceIndex] = localPlayer;
                 setBoardState(newBoardState);
                 
@@ -230,7 +305,7 @@ function TicTacToe(props: {
   );
 }
 
-function BoardPieceComponent(props: {
+function BoardTile(props: {
   piece: PieceType;
   onClick: () => void;
   disabled: boolean;
@@ -239,7 +314,7 @@ function BoardPieceComponent(props: {
   return (
     <button
       type="button"
-      className="board-piece"
+      className="board-tile"
       disabled={disabled}
       onClick={onClick}
     >

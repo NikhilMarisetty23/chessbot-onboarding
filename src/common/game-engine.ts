@@ -1,16 +1,19 @@
 import { GameFinishedReason } from "./game-end-reasons.ts";
-import { PieceType, Placement } from "./game-types.ts";
+import { Placementos } from "./game-types.ts";
 
 export class GameEngine {
-    private game: PieceType[];
+    private board: PieceType[];
+    private currentTurn: PieceType;
 
-    constructor() {
-        this.game = Array(9).fill(PieceType.BLANK);
+    constructor(startingPiece: PieceType) {
+        this.board = Array(9).fill(PieceType.BLANK);
+        this.currentTurn = startingPiece;
     }
 
     place(placement: Placement): boolean {
-        if (this.game[placement.square] == PieceType.BLANK) {
-            this.game[placement.square] = placement.pieceType;
+        if (this.board[placement.square] == PieceType.BLANK) {
+            this.board[placement.square] = placement.pieceType;
+            this.currentTurn = GameEngine.oppositePiece(this.currentTurn);
             return true;
         } else {
             return false;
@@ -23,7 +26,7 @@ export class GameEngine {
      * @returns true if the square has a piece on it.
      */
     hasPiece(square: number) {
-        return this.game[square] !== PieceType.BLANK;
+        return this.board[square] !== PieceType.BLANK;
     }
 
     static oppositePiece(pieceType: PieceType): PieceType {
@@ -34,31 +37,40 @@ export class GameEngine {
         }
     }
 
+    /**
+     * Returns if the input piece has a win in the specified row.
+     * @param pieceType - The piece type to check the wins for.
+     * @param offset - The row offset (determines which row to check).
+     * @returns true if the rows has a win
+     */
     isRowWin(pieceType: PieceType, offset: number): boolean {
-        const first = this.game[offset*3] == pieceType;
-        const second= this.game[1+(offset*3)] == pieceType;
-        const third = this.game[2+(offset*3)] == pieceType;
+        const first = this.board[offset*3] == pieceType;
+        const second= this.board[1+(offset*3)] == pieceType;
+        const third = this.board[2+(offset*3)] == pieceType;
         return first && second && third;
     }
 
+    /**
+     * Returns if the input piece has a win in the specified column.
+     * @param pieceType - The piece type to check the wins for.
+     * @param offset - The column offset (determines which column to check).
+     * @returns true if the columns has a win
+     */
     isColumnWin(pieceType: PieceType, offset: number): boolean {
-        const first = this.game[offset] == pieceType;
-        const second= this.game[3+offset] == pieceType;
-        const third = this.game[6+offset] == pieceType;
-        return first && second && third;
+        return false;
     }
 
     isDiagonalWin(pieceType: PieceType): boolean {
-        const first = this.game[0] == pieceType;
-        const second= this.game[4] == pieceType;
-        const third = this.game[8] == pieceType;
+        const first = this.board[0] == pieceType;
+        const second= this.board[4] == pieceType;
+        const third = this.board[8] == pieceType;
         return first && second && third;
     }
 
     isAntiDiagonalWin(pieceType: PieceType): boolean {
-        const first = this.game[2] == pieceType;
-        const second= this.game[4] == pieceType;
-        const third = this.game[6] == pieceType;
+        const first = this.board[2] == pieceType;
+        const second= this.board[4] == pieceType;
+        const third = this.board[6] == pieceType;
         return first && second && third;
     }
 
@@ -103,8 +115,8 @@ export class GameEngine {
     }
 
     isTie(): boolean {
-        for (let i = 0; i < this.game.length; i++) {
-            if (this.game[i] == PieceType.BLANK) {
+        for (let i = 0; i < this.board.length; i++) {
+            if (this.board[i] == PieceType.BLANK) {
                 return false;
             }
         }

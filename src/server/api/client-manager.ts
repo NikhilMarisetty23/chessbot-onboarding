@@ -1,10 +1,10 @@
 import { WebSocket } from "ws";
 import { SocketManager } from "./socket-manager.ts";
 import { ClientType } from "../../common/client-types.ts";
-import { Message } from "../../common/message/message.ts";
+import { Message } from "../../common/message/messages.ts";
 
 /**
- * A class which maps client ids to their corresponding sockets (if any).
+ * A class which handles communication between clients
  */
 export class ClientManager {
     constructor(
@@ -23,7 +23,9 @@ export class ClientManager {
     public sendToHost(message: Message): boolean {
         const socket = this.getHostSocket();
         if (socket !== undefined) {
-            socket.send(message.toJson());
+            const json = message.toJson();
+            socket.send(json);
+            console.log("Sent to host socket: " + json);
         } else {
             console.log("Host socket undefined");
         }
@@ -33,7 +35,9 @@ export class ClientManager {
     public sendToClient(message: Message): boolean {
         const socket = this.getClientSocket();
         if (socket !== undefined) {
-            socket.send(message.toJson());
+            const json = message.toJson();
+            socket.send(json);
+            console.log("Sent to client socket: " + json);
         } else {
             console.log("Client socket undefined");
         }
@@ -59,10 +63,8 @@ export class ClientManager {
     public assignPlayer(id: string): void {
         if (this.hostId === undefined || id === this.hostId) {
             this.hostId = id;
-            console.log("Host Assigned");
         } else if (this.clientId === undefined || id === this.clientId) {
             this.clientId = id;
-            console.log("Client Assigned");
         }
     }
 }
